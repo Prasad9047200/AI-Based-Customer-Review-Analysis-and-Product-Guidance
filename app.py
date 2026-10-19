@@ -161,16 +161,23 @@ with st.sidebar:
     # ── LIVE MODE ─────────────────────────────────────────────────────────────
     else:
         st.markdown(
-            '<span class="live-badge">LIVE</span> Fetches real reviews from Amazon India & Flipkart',
+            '<span class="live-badge">LIVE</span> Real Amazon products · AI-generated reviews',
             unsafe_allow_html=True,
         )
+        rapidapi_key = st.text_input(
+            "RapidAPI Key (optional)",
+            placeholder="Paste key for real Amazon reviews",
+            type="password",
+            help="Free key at rapidapi.com → search 'Real-Time Amazon Data'. Leave blank to use AI-generated reviews.",
+        )
         st.markdown("")
-        fetch_btn = st.button("🔎 Search Live Products", use_container_width=True, type="primary")
+        fetch_btn = st.button("🔎 Search Products", use_container_width=True, type="primary")
 
         if fetch_btn and search_query:
-            with st.spinner(f"Searching Amazon & Flipkart for '{search_query}'…"):
-                live_results = scraper.search_all(search_query, max_per_source=5)
+            with st.spinner(f"Searching for '{search_query}'…"):
+                live_results = scraper.search_all(search_query, max_per_source=6, rapidapi_key=rapidapi_key)
             st.session_state.live_products = live_results
+            st.session_state.rapidapi_key = rapidapi_key
             if not live_results:
                 st.warning("No products found. Try a different search term.")
 
@@ -242,18 +249,16 @@ if st.session_state.mode == "dataset" and analyse_btn and selected_label != "—
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state.mode == "live" and "analyse_live_btn" in dir() and analyse_live_btn and live_products:
     selected_product = live_labels[selected_live_label]
-    src_badge = "🟠 Amazon" if selected_product["product_id"].startswith("AMZ") else "🔵 Flipkart"
+    rapi_key = st.session_state.get("rapidapi_key", "")
 
-    with st.spinner(f"Fetching live reviews from {src_badge}…"):
-        live_reviews = scraper.fetch_reviews(selected_product, max_reviews=20)
+    with st.spinner(f"🤖 Generating AI reviews for {selected_product['product_name']}…"):
+        live_reviews = scraper.fetch_reviews(selected_product, max_reviews=15, rapidapi_key=rapi_key)
 
-    if not live_reviews:
-        st.error(
-            "Could not fetch reviews for this product. The site may have blocked the request. "
-            "Try another product or use the Dataset mode.",
-            icon="⚠️",
-        )
-        st.stop()
+    # fetch_reviews always returns something (AI fallback) — no error possible
+    review_source = "Amazon API" if any(
+        r.get("reviewer","") not in ["Rahul Sharma","Priya Verma","Amit Kumar"]
+        for r in live_reviews[:3]
+    ) else "AI-Generated"
 
     df = pd.DataFrame(live_reviews)
     df["rating"] = pd.to_numeric(df["rating"], errors="coerce").fillna(3).astype(int)
@@ -262,7 +267,7 @@ if st.session_state.mode == "live" and "analyse_live_btn" in dir() and analyse_l
     stats   = rp.compute_statistics(df)
     reviews = rp.get_review_texts(df)
 
-    with st.spinner(f"🤖 Analysing {len(reviews)} live reviews with IBM watsonx.ai…"):
+    with st.spinner(f"🤖 Analysing {len(reviews)} reviews with IBM watsonx.ai…"):
         result = ai.run_full_analysis(
             product_name=selected_product["product_name"],
             reviews=reviews,
@@ -279,10 +284,12 @@ if st.session_state.mode == "live" and "analyse_live_btn" in dir() and analyse_l
         "stats":           stats,
     })
 
+    src_label = f"🟠 Amazon" if selected_product["product_id"].startswith("AMZ") else "🔵 Flipkart"
+    rev_label = f"{len(reviews)} reviews ({review_source})"
     if result.get("source") == "watsonx":
-        st.success(f"✅ Analysed {len(reviews)} live reviews via IBM watsonx.ai · {src_badge}", icon="🤖")
+        st.success(f"✅ {rev_label} analysed via IBM watsonx.ai · {src_label}", icon="🤖")
     else:
-        st.info(f"ℹ️ Analysed {len(reviews)} live reviews with local NLP · {src_badge}", icon="🔍")
+        st.info(f"ℹ️ {rev_label} analysed with local NLP · {src_label}", icon="🔍")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Render results
